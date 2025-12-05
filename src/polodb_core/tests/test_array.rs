@@ -663,3 +663,108 @@ fn test_multikey_index_default_options() {
         "Index should be used"
     );
 }
+
+// ============================================
+// Phase 5: Array Index Access Tests
+// ============================================
+
+/// Test querying by array index position (tags.0, tags.1)
+#[test]
+fn test_array_index_access() {
+    let db = prepare_db("test-array-index-access").unwrap();
+    let col = db.collection::<Document>("items");
+
+    col.insert_many(vec![
+        doc! { "name": "Item1", "tags": ["rojo", "grande", "metal"] },
+        doc! { "name": "Item2", "tags": ["azul", "pequeño"] },
+        doc! { "name": "Item3", "tags": ["rojo", "pequeño", "madera"] },
+    ])
+    .unwrap();
+
+    // Query first element (tags.0)
+    let result = col
+        .find(doc! { "tags.0": "rojo" })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+
+    assert_eq!(result.len(), 2, "Items with 'rojo' as first tag");
+    assert!(result
+        .iter()
+        .any(|d| d.get("name").unwrap().as_str().unwrap() == "Item1"));
+    assert!(result
+        .iter()
+        .any(|d| d.get("name").unwrap().as_str().unwrap() == "Item3"));
+
+    // Query second element (tags.1)
+    let result = col
+        .find(doc! { "tags.1": "pequeño" })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+
+    assert_eq!(result.len(), 2, "Items with 'pequeño' as second tag");
+    assert!(result
+        .iter()
+        .any(|d| d.get("name").unwrap().as_str().unwrap() == "Item2"));
+    assert!(result
+        .iter()
+        .any(|d| d.get("name").unwrap().as_str().unwrap() == "Item3"));
+}
+
+/// Test array index access with nested documents (e.g., data.values.0)
+#[test]
+fn test_array_index_nested() {
+    let db = prepare_db("test-array-index-nested").unwrap();
+    let col = db.collection::<Document>("items");
+
+    col.insert_many(vec![
+        doc! { "name": "Item1", "data": { "values": [10, 20, 30] } },
+        doc! { "name": "Item2", "data": { "values": [100, 200] } },
+    ])
+    .unwrap();
+
+    // Query nested array by index: data.values.0
+    let result = col
+        .find(doc! { "data.values.0": 10 })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+
+    assert_eq!(result.len(), 1);
+    assert_eq!(result[0].get("name").unwrap().as_str().unwrap(), "Item1");
+
+    // Also verify second element works
+    let result2 = col
+        .find(doc! { "data.values.1": 200 })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+
+    assert_eq!(result2.len(), 1);
+    assert_eq!(result2[0].get("name").unwrap().as_str().unwrap(), "Item2");
+}
+
+/// Test out of bounds index returns no results
+#[test]
+fn test_array_index_out_of_bounds() {
+    let db = prepare_db("test-array-index-out-of-bounds").unwrap();
+    let col = db.collection::<Document>("items");
+
+    col.insert_one(doc! { "name": "Item1", "tags": ["a", "b"] })
+        .unwrap();
+
+    // Index 10 doesn't exist
+    let result = col
+        .find(doc! { "tags.10": "x" })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+
+    assert_eq!(result.len(), 0);
+}

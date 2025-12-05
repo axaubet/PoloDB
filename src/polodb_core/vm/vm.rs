@@ -673,6 +673,41 @@ impl VM {
                         }
                     }
 
+                    DbOp::GetArrayElement => {
+                        let index = self.pc.add(1).cast::<i32>().read();
+                        let location = self.pc.add(5).cast::<u32>().read();
+
+                        let top = &self.stack[self.stack.len() - 1];
+                        match top {
+                            Bson::Array(arr) => {
+                                let idx = if index < 0 {
+                                    // Negative index not supported
+                                    self.r0 = 0;
+                                    self.reset_location(location);
+                                    continue;
+                                } else {
+                                    index as usize
+                                };
+
+                                if idx < arr.len() {
+                                    let val = arr[idx].clone();
+                                    self.r0 = 1;
+                                    self.stack.push(val);
+                                    self.pc = self.pc.add(9);
+                                } else {
+                                    // Out of bounds
+                                    self.r0 = 0;
+                                    self.reset_location(location);
+                                }
+                            }
+                            _ => {
+                                // Not an array
+                                self.r0 = 0;
+                                self.reset_location(location);
+                            }
+                        }
+                    }
+
                     DbOp::UnsetField => {
                         let field_id = self.pc.add(1).cast::<u32>().read();
 

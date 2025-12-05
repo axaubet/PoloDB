@@ -561,18 +561,63 @@ impl Codegen {
                 }
 
                 _ => {
-                    let key_static_id = self.push_static(key.into());
-                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+                    // Check if the key contains numeric path segments (e.g., "tags.0" or "data.values.0")
+                    let segments: Vec<&str> = key.split('.').collect();
+                    let first_numeric_idx = segments.iter().position(|s| s.parse::<i32>().is_ok());
 
-                    let value_static_id = self.push_static(value.clone());
-                    self.emit_push_value(value_static_id); // push a value2
+                    if let Some(idx) = first_numeric_idx {
+                        // Split: everything before the numeric index goes to GetField
+                        // The numeric index and anything after uses GetArrayElement
+                        let prefix = segments[..idx].join(".");
+                        let numeric_part = &segments[idx..];
+                        let has_prefix = !prefix.is_empty();
 
-                    self.emit(DbOp::EqualOrContains);
-                    // if not equal，go to next
-                    self.emit_goto(DbOp::IfFalse, not_found_label);
+                        // First, get to the array using standard GetField (handles dots internally)
+                        if has_prefix {
+                            let key_static_id = self.push_static(prefix.into());
+                            self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+                        }
 
-                    self.emit(DbOp::Pop); // pop a value2
-                    self.emit(DbOp::Pop); // pop a value1
+                        // Now access array elements
+                        for seg in numeric_part {
+                            if let Ok(index) = seg.parse::<i32>() {
+                                self.emit_array_element_access(index, not_found_label);
+                            } else {
+                                // This would be a field access after array index (e.g., arr.0.name)
+                                let key_static_id = self.push_static((*seg).into());
+                                self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+                            }
+                        }
+
+                        // Calculate how many values are on stack to pop later
+                        let values_pushed = if has_prefix { 1 } else { 0 } + numeric_part.len();
+
+                        let value_static_id = self.push_static(value.clone());
+                        self.emit_push_value(value_static_id);
+
+                        self.emit(DbOp::EqualOrContains);
+                        self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                        // Pop all pushed values
+                        self.emit(DbOp::Pop); // query value
+                        for _ in 0..values_pushed {
+                            self.emit(DbOp::Pop);
+                        }
+                    } else {
+                        // Simple key without numeric indices
+                        let key_static_id = self.push_static(key.into());
+                        self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                        let value_static_id = self.push_static(value.clone());
+                        self.emit_push_value(value_static_id); // push a value2
+
+                        self.emit(DbOp::EqualOrContains);
+                        // if not equal，go to next
+                        self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                        self.emit(DbOp::Pop); // pop a value2
+                        self.emit(DbOp::Pop); // pop a value1
+                    }
                 }
             }
         }
@@ -583,10 +628,37 @@ impl Codegen {
         let slices: Vec<&str> = key.split('.').collect();
         for slice in &slices {
             let str_ref: &str = slice;
-            let current_stat_id = self.push_static(str_ref.into());
-            self.emit_goto2(DbOp::GetField, current_stat_id, get_field_failed_label);
+            // Check if this path segment is a numeric index (e.g., "0", "1", "2")
+            if let Ok(index) = str_ref.parse::<i32>() {
+                // Numeric index - use GetArrayElement
+                self.emit_array_element_access(index, get_field_failed_label);
+            } else {
+                // String key - use GetField
+                let current_stat_id = self.push_static(str_ref.into());
+                self.emit_goto2(DbOp::GetField, current_stat_id, get_field_failed_label);
+            }
         }
         slices.len()
+    }
+
+    fn emit_array_element_access(&mut self, index: i32, failed_label: Label) {
+        let record_loc = self.current_location();
+        self.emit(DbOp::GetArrayElement);
+        // emit index as i32
+        let index_bytes: [u8; 4] = index.to_le_bytes();
+        self.program.instructions.extend_from_slice(&index_bytes);
+        // emit label location
+        let slot = &self.program.label_slots[failed_label.u_pos()];
+        if !slot.is_empty() {
+            let loc = slot.position();
+            let bytes: [u8; 4] = loc.to_le_bytes();
+            self.program.instructions.extend_from_slice(&bytes);
+            return;
+        }
+        let bytes2: [u8; 4] = (-1_i32).to_le_bytes();
+        self.program.instructions.extend_from_slice(&bytes2);
+        self.jump_table
+            .push(JumpTableRecord::new(record_loc, 5, failed_label.pos()));
     }
 
     fn emit_logical(&mut self, op: DbOp, is_in_not: bool) {

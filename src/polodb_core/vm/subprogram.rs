@@ -654,6 +654,13 @@ impl fmt::Display for SubProgram {
                         pc += 9;
                     }
 
+                    DbOp::GetArrayElement => {
+                        let index = begin.add(pc + 1).cast::<i32>().read();
+                        let location = begin.add(pc + 5).cast::<u32>().read();
+                        writeln!(f, "{}: GetArrayElement({}, {})", pc, index, location)?;
+                        pc += 9;
+                    }
+
                     DbOp::SetField => {
                         let static_id = begin.add(pc + 1).cast::<u32>().read();
                         let val = &self.static_values[static_id as usize];
@@ -847,13 +854,13 @@ mod tests {
 80: Label(0, "compare_function")
 85: GetField("name", 129)
 94: PushValue("Vincent Chan")
-99: Equal
+99: EqualOrContains
 100: FalseJump(129)
 105: Pop
 106: Pop
 107: GetField("age", 129)
 116: PushValue(32)
-121: Equal
+121: EqualOrContains
 122: FalseJump(129)
 127: Pop
 128: Pop
@@ -904,7 +911,7 @@ mod tests {
 80: Label(0, "compare_function")
 85: GetField("info.color", 107)
 94: PushValue("yellow")
-99: Equal
+99: EqualOrContains
 100: FalseJump(107)
 105: Pop
 106: Pop
@@ -1051,13 +1058,13 @@ mod tests {
 80: Label(0, "compare_function")
 85: GetField("_id", 129)
 94: PushValue(6)
-99: Equal
+99: EqualOrContains
 100: FalseJump(129)
 105: Pop
 106: Pop
 107: GetField("age", 129)
 116: PushValue(32)
-121: Equal
+121: EqualOrContains
 122: FalseJump(129)
 127: Pop
 128: Pop
@@ -1118,7 +1125,7 @@ mod tests {
 90: Label(8)
 95: GetField("age", 117)
 104: PushValue(11)
-109: Equal
+109: EqualOrContains
 110: FalseJump(117)
 115: Pop
 116: Pop
@@ -1129,7 +1136,7 @@ mod tests {
 123: Label(10)
 128: GetField("age", 150)
 137: PushValue(12)
-142: Equal
+142: EqualOrContains
 143: FalseJump(150)
 148: Pop
 149: Pop

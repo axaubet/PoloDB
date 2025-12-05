@@ -137,6 +137,16 @@ pub enum DbOp {
     // op2. location: 4bytes
     GetField,
 
+    // get element at index from array on top of stack
+    // push the value to the stack
+    //
+    // if failed (not array or out of bounds), goto op2
+    //
+    // 9 bytes
+    // op1. index: 4bytes (as i32)
+    // op2. location: 4bytes
+    GetArrayElement,
+
     // remove the field
     //
     // 5 bytes
