@@ -12,8 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cmp::Ordering;
 use bson::Bson;
+use std::cmp::Ordering;
 
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -221,6 +221,18 @@ pub enum DbOp {
     // the result is stored in r0
     In,
 
+    // check if top2 equals top1, or if top2 is an array and contains top1
+    // the result is stored in r0
+    EqualOrContains,
+
+    // check if top2 (array) contains ALL values from top1 (array)
+    // the result is stored in r0
+    All,
+
+    // check if top2 (array) equals top1 (array) exactly
+    // same elements in same order
+    ArrayEqual,
+
     EqualNull,
 
     // open a cursor with op0 as root_pid
@@ -300,7 +312,6 @@ pub enum DbOp {
     // Exit
     // Close cursor automatically
     Halt,
-
 }
 
 pub(crate) fn generic_cmp(op: DbOp, val1: &Bson, val2: &Bson) -> crate::Result<bool> {

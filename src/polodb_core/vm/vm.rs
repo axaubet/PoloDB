@@ -13,19 +13,17 @@
 // limitations under the License.
 
 use crate::cursor::Cursor;
-use crate::errors::{
-    FieldTypeUnexpectedStruct, RegexError, UnexpectedTypeForOpStruct,
-};
-use crate::index::{IndexHelper, IndexHelperOperation, make_index_key_with_query_key};
+use crate::errors::{FieldTypeUnexpectedStruct, RegexError, UnexpectedTypeForOpStruct};
+use crate::index::{make_index_key_with_query_key, IndexHelper, IndexHelperOperation};
 use crate::transaction::TransactionInner;
 use crate::vm::op::{generic_cmp, DbOp};
+use crate::vm::vm_external_func::VmExternalFuncStatus;
 use crate::vm::SubProgram;
 use crate::{Error, Metrics, Result};
 use bson::{Bson, Document};
 use regex::RegexBuilder;
 use std::cell::Cell;
 use std::cmp::Ordering;
-use crate::vm::vm_external_func::VmExternalFuncStatus;
 
 macro_rules! try_vm {
     ($self:ident, $action:expr) => {
@@ -205,10 +203,7 @@ impl VM {
         Ok(true)
     }
 
-    fn read_index_value_by_index_key(
-        &mut self,
-        index_key: &[u8],
-    ) -> Result<Option<Bson>> {
+    fn read_index_value_by_index_key(&mut self, index_key: &[u8]) -> Result<Option<Bson>> {
         let slices = crate::utils::bson::split_stacked_keys(index_key)?;
         let pkey = slices.last().expect("pkey must exist");
 
@@ -252,7 +247,7 @@ impl VM {
             );
 
             self.r0 = 1;
-            return Ok(())
+            return Ok(());
         }
 
         self.r0 = 0;
@@ -270,7 +265,8 @@ impl VM {
 
         let index_value = self.index_value.as_ref().expect("index_value must exist");
 
-        let key_buffer = make_index_key_with_query_key(cursor.prefix_bytes.as_slice(), index_value)?;
+        let key_buffer =
+            make_index_key_with_query_key(cursor.prefix_bytes.as_slice(), index_value)?;
 
         let current_key = current_key.unwrap();
         if !current_key.starts_with(key_buffer.as_slice()) {
@@ -462,7 +458,8 @@ impl VM {
             self.stack[frame.stack_begin_pos + i] = self.stack[clone_start_pos + i].clone();
         }
 
-        self.stack.resize(frame.stack_begin_pos + return_size, Bson::Null);
+        self.stack
+            .resize(frame.stack_begin_pos + return_size, Bson::Null);
 
         self.reset_location(frame.return_pos as u32);
     }
@@ -478,7 +475,7 @@ impl VM {
             Some(Bson::Double(d)) => {
                 *d += 1.0;
             }
-            _ => ()
+            _ => (),
         }
     }
 
@@ -631,7 +628,7 @@ impl VM {
                                     0
                                 }
                             }
-                            _ => panic!("store r0 failed")
+                            _ => panic!("store r0 failed"),
                         };
                         self.pc = self.pc.add(1);
                     }
@@ -810,18 +807,140 @@ impl VM {
                     //
                     // check value in Array
                     DbOp::In => {
-                        let top1 = &self.stack[self.stack.len() - 1];
-                        let top2 = &self.stack[self.stack.len() - 2];
+                        let query_array = &self.stack[self.stack.len() - 1];
+                        let doc_value = &self.stack[self.stack.len() - 2];
+
+                        self.r0 = 0;
+                        let query_arr = query_array.as_array().unwrap();
+
+                        match doc_value {
+                            Bson::Array(doc_arr) => {
+                                // Array in document: check if there's any intersection
+                                // { tags: { $in: ["rojo", "azul"] } } where tags = ["rojo", "grande"]
+                                'outer: for query_item in query_arr.iter() {
+                                    for doc_item in doc_arr.iter() {
+                                        if matches!(
+                                            crate::utils::bson::value_cmp(query_item, doc_item),
+                                            Ok(Ordering::Equal)
+                                        ) {
+                                            self.r0 = 1;
+                                            break 'outer;
+                                        }
+                                    }
+                                }
+                            }
+                            _ => {
+                                // Scalar value: current behavior
+                                for item in query_arr.iter() {
+                                    let cmp_result = crate::utils::bson::value_cmp(doc_value, item);
+                                    if let Ok(Ordering::Equal) = cmp_result {
+                                        self.r0 = 1;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+
+                        self.pc = self.pc.add(1);
+                    }
+
+                    // stack
+                    // -1: query value (scalar)
+                    // -2: document value (can be scalar or array)
+                    //
+                    // if doc_value is array: check if array contains query_value
+                    // otherwise: check equality
+                    DbOp::EqualOrContains => {
+                        let query_value = &self.stack[self.stack.len() - 1];
+                        let doc_value = &self.stack[self.stack.len() - 2];
+
+                        self.r0 = match doc_value {
+                            Bson::Array(arr) => {
+                                // If the field is an array, check if it contains the value
+                                let found = arr.iter().any(|item| {
+                                    matches!(
+                                        crate::utils::bson::value_cmp(query_value, item),
+                                        Ok(Ordering::Equal)
+                                    )
+                                });
+                                if found {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                            _ => {
+                                // Standard equality comparison
+                                let cmp = crate::utils::bson::value_cmp(doc_value, query_value);
+                                if matches!(cmp, Ok(Ordering::Equal)) {
+                                    1
+                                } else {
+                                    0
+                                }
+                            }
+                        };
+
+                        self.pc = self.pc.add(1);
+                    }
+
+                    // stack
+                    // -1: query array (values to check)
+                    // -2: document value (should be array)
+                    //
+                    // check if doc array contains ALL values from query array
+                    DbOp::All => {
+                        let query_array = &self.stack[self.stack.len() - 1];
+                        let doc_value = &self.stack[self.stack.len() - 2];
 
                         self.r0 = 0;
 
-                        for item in top1.as_array().unwrap().iter() {
-                            let cmp_result = crate::utils::bson::value_cmp(top2, item);
-                            if let Ok(Ordering::Equal) = cmp_result {
-                                self.r0 = 1;
-                                break;
-                            }
+                        if let (Bson::Array(doc_arr), Bson::Array(query_arr)) =
+                            (doc_value, query_array)
+                        {
+                            let all_found = query_arr.iter().all(|query_item| {
+                                doc_arr.iter().any(|doc_item| {
+                                    matches!(
+                                        crate::utils::bson::value_cmp(query_item, doc_item),
+                                        Ok(Ordering::Equal)
+                                    )
+                                })
+                            });
+                            self.r0 = if all_found { 1 } else { 0 };
                         }
+
+                        self.pc = self.pc.add(1);
+                    }
+
+                    // stack
+                    // -1: query array
+                    // -2: document array
+                    //
+                    // check if both arrays are exactly equal (same elements, same order)
+                    DbOp::ArrayEqual => {
+                        let query_array = &self.stack[self.stack.len() - 1];
+                        let doc_value = &self.stack[self.stack.len() - 2];
+
+                        self.r0 = match (doc_value, query_array) {
+                            (Bson::Array(doc_arr), Bson::Array(query_arr)) => {
+                                if doc_arr.len() != query_arr.len() {
+                                    0
+                                } else {
+                                    let all_equal =
+                                        doc_arr.iter().zip(query_arr.iter()).all(|(a, b)| {
+                                            matches!(
+                                                crate::utils::bson::value_cmp(a, b),
+                                                Ok(Ordering::Equal)
+                                            )
+                                        });
+                                    if all_equal {
+                                        1
+                                    } else {
+                                        0
+                                    }
+                                }
+                            }
+                            _ => 0,
+                        };
 
                         self.pc = self.pc.add(1);
                     }
@@ -886,12 +1005,8 @@ impl VM {
                         self.pc = self.pc.add(1);
                     }
 
-                    DbOp::Not =>{
-                        self.r0 = if self.r0 == 0 {
-                            1
-                        } else {
-                            0
-                        };
+                    DbOp::Not => {
+                        self.r0 = if self.r0 == 0 { 1 } else { 0 };
 
                         self.pc = self.pc.add(1);
                     }
@@ -960,7 +1075,8 @@ impl VM {
                         let params = &self.stack[self.stack.len() - size_of_param..];
                         let result = try_vm!(self, func.call(params));
                         // pop params
-                        self.stack.resize(self.stack.len() - size_of_param, Bson::Null);
+                        self.stack
+                            .resize(self.stack.len() - size_of_param, Bson::Null);
                         self.r0 = match result {
                             VmExternalFuncStatus::Continue => {
                                 self.stack.push(Bson::Null);
@@ -991,11 +1107,7 @@ impl VM {
                         let id = self.pc.add(1).cast::<u32>().read();
                         let func = &self.program.external_funcs[id as usize];
 
-                        self.r0 = if func.is_completed() {
-                            1
-                        } else {
-                            0
-                        };
+                        self.r0 = if func.is_completed() { 1 } else { 0 };
 
                         self.pc = self.pc.add(5);
                     }
@@ -1011,7 +1123,8 @@ impl VM {
 
                     DbOp::IfFalseRet => {
                         let return_size = self.pc.add(1).cast::<u32>().read() as usize;
-                        if self.r0 == 0 {  // false
+                        if self.r0 == 0 {
+                            // false
                             self.ret(return_size);
                         } else {
                             self.pc = self.pc.add(5);
