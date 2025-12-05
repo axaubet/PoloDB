@@ -12,15 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use bson::{Bson, Document};
-use bson::spec::ElementType;
-use crate::Result;
-use crate::coll::collection_info::{
-    CollectionSpecification,
-    IndexInfo,
-};
+use crate::coll::collection_info::{CollectionSpecification, IndexInfo};
 use crate::errors::DuplicateKeyError;
 use crate::transaction::TransactionInner;
+use crate::Result;
+use bson::spec::ElementType;
+use bson::{Bson, Document};
 
 pub(crate) const INDEX_PREFIX: &str = "$I";
 
@@ -38,11 +35,12 @@ pub(crate) struct IndexHelper<'b, 'c, 'd, 'e> {
     pkey: &'e Bson,
 }
 
-pub(crate) fn make_index_key_with_query_key(prefix_bytes: &[u8], query_value: &Bson) -> Result<Vec<u8>> {
+pub(crate) fn make_index_key_with_query_key(
+    prefix_bytes: &[u8],
+    query_value: &Bson,
+) -> Result<Vec<u8>> {
     let mut key_buffer = prefix_bytes.to_vec();
-    let primary_key_buffer = crate::utils::bson::stacked_key([
-        query_value,
-    ])?;
+    let primary_key_buffer = crate::utils::bson::stacked_key([query_value])?;
 
     key_buffer.extend_from_slice(&primary_key_buffer);
 
@@ -50,7 +48,6 @@ pub(crate) fn make_index_key_with_query_key(prefix_bytes: &[u8], query_value: &B
 }
 
 impl<'b, 'c, 'd, 'e> IndexHelper<'b, 'c, 'd, 'e> {
-
     #[inline]
     pub fn new(
         txn: &'b TransactionInner,
@@ -101,24 +98,45 @@ impl<'b, 'c, 'd, 'e> IndexHelper<'b, 'c, 'd, 'e> {
 
         let value = crate::utils::bson::try_get_document_value(data_doc, keys);
         if value.is_none() {
-            return Ok(())
+            return Ok(());
+        }
+        let value = value.unwrap();
+
+        // MULTIKEY: If the value is an array, create one index entry per element
+        match &value {
+            Bson::Array(arr) => {
+                for element in arr {
+                    IndexHelper::execute_single_index_entry(
+                        op, col_name, pkey, index_name, index_info, txn, element,
+                    )?;
+                }
+            }
+            _ => {
+                // Scalar value: single index entry (original behavior)
+                IndexHelper::execute_single_index_entry(
+                    op, col_name, pkey, index_name, index_info, txn, &value,
+                )?;
+            }
         }
 
+        Ok(())
+    }
+
+    /// Helper to create/delete a single index entry
+    fn execute_single_index_entry(
+        op: IndexHelperOperation,
+        col_name: &str,
+        pkey: &Bson,
+        index_name: &str,
+        index_info: &IndexInfo,
+        txn: &TransactionInner,
+        value: &Bson,
+    ) -> Result<()> {
         if index_info.is_unique() {
-            IndexHelper::check_unique_key(
-                col_name,
-                index_name,
-                value.as_ref().unwrap(),
-                txn,
-            )?;
+            IndexHelper::check_unique_key(col_name, index_name, value, txn)?;
         }
 
-        let index_key = IndexHelper::make_index_key(
-            col_name,
-            index_name,
-            value.as_ref().unwrap(),
-            Some(pkey),
-        )?;
+        let index_key = IndexHelper::make_index_key(col_name, index_name, value, Some(pkey))?;
 
         if op == IndexHelperOperation::Insert {
             let value_buf = [ElementType::Null as u8];
@@ -136,12 +154,7 @@ impl<'b, 'c, 'd, 'e> IndexHelper<'b, 'c, 'd, 'e> {
         value: &Bson,
         txn: &TransactionInner,
     ) -> Result<()> {
-        let index_key_tester = IndexHelper::make_index_key(
-            col_name,
-            index_name,
-            value,
-            None,
-        )?;
+        let index_key_tester = IndexHelper::make_index_key(col_name, index_name, value, None)?;
 
         let cursor = txn.rocksdb_txn.new_iterator();
         cursor.seek(&index_key_tester);
@@ -156,23 +169,24 @@ impl<'b, 'c, 'd, 'e> IndexHelper<'b, 'c, 'd, 'e> {
                 name: index_name.to_string(),
                 key: value.to_string(),
                 ns: col_name.to_string(),
-            }.into());
+            }
+            .into());
         }
 
         Ok(())
     }
 
-    pub fn make_index_key(col_name: &str, index_name: &str, value: &Bson, pkey: Option<&Bson>) -> Result<Vec<u8>> {
+    pub fn make_index_key(
+        col_name: &str,
+        index_name: &str,
+        value: &Bson,
+        pkey: Option<&Bson>,
+    ) -> Result<Vec<u8>> {
         let b_prefix = Bson::String(INDEX_PREFIX.to_string());
         let b_col_name = Bson::String(col_name.to_string());
         let b_index_name = &Bson::String(index_name.to_string());
 
-        let mut buf: Vec<&Bson> = vec![
-            &b_prefix,
-            &b_col_name,
-            &b_index_name,
-            value,
-        ];
+        let mut buf: Vec<&Bson> = vec![&b_prefix, &b_col_name, &b_index_name, value];
 
         if let Some(pkey) = pkey {
             buf.push(pkey);
@@ -180,14 +194,13 @@ impl<'b, 'c, 'd, 'e> IndexHelper<'b, 'c, 'd, 'e> {
 
         crate::utils::bson::stacked_key(buf)
     }
-
 }
 
 #[cfg(test)]
 mod tests {
-    use bson::Bson;
-    use crate::utils::str::escape_binary_to_string;
     use super::IndexHelper;
+    use crate::utils::str::escape_binary_to_string;
+    use bson::Bson;
 
     #[test]
     fn test_make_index_key() {
@@ -196,11 +209,14 @@ mod tests {
             "name",
             &Bson::String("value".to_string()),
             Some(&Bson::String("Vincent".to_string())),
-        ).unwrap() ;
+        )
+        .unwrap();
 
-        let escaped_string = escape_binary_to_string(index_key) .unwrap();
+        let escaped_string = escape_binary_to_string(index_key).unwrap();
 
-        assert_eq!(escaped_string, "\\x02$I\\x00\\x02users\\x00\\x02name\\x00\\x02value\\x00\\x02Vincent\\x00");
+        assert_eq!(
+            escaped_string,
+            "\\x02$I\\x00\\x02users\\x00\\x02name\\x00\\x02value\\x00\\x02Vincent\\x00"
+        );
     }
-
 }

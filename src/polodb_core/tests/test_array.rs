@@ -13,7 +13,7 @@
 // limitations under the License.
 
 use polodb_core::bson::{doc, Document};
-use polodb_core::{CollectionT, Result};
+use polodb_core::{CollectionT, IndexModel, IndexOptions, Result};
 
 mod common;
 
@@ -521,4 +521,145 @@ fn test_array_exact_match_numeric() {
 
     assert_eq!(result.len(), 1);
     assert_eq!(result[0].get("name").unwrap().as_str().unwrap(), "Item1");
+}
+
+// ============================================
+// Phase 6: Multikey Index Tests
+// ============================================
+
+/// Test creating an index on an array field and querying with it
+#[test]
+fn test_multikey_index_find() {
+    let db = prepare_db("test-multikey-index-find").unwrap();
+    let metrics = db.metrics();
+    metrics.enable();
+    let initial_count = metrics.find_by_index_count();
+
+    let col = db.collection::<Document>("items");
+
+    // Create index on tags field BEFORE inserting data
+    col.create_index(IndexModel {
+        keys: doc! { "tags": 1 },
+        options: Some(IndexOptions {
+            name: Some("tags_idx".to_string()),
+            unique: Some(false),
+        }),
+    })
+    .unwrap();
+
+    // Insert documents with array fields
+    col.insert_many(vec![
+        doc! { "name": "Item1", "tags": ["rojo", "grande", "metal"] },
+        doc! { "name": "Item2", "tags": ["azul", "pequeño", "plastico"] },
+        doc! { "name": "Item3", "tags": ["rojo", "pequeño", "madera"] },
+    ])
+    .unwrap();
+
+    // Query using the index (should use multikey entries)
+    let result = col
+        .find(doc! { "tags": "rojo" })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+
+    assert_eq!(result.len(), 2);
+    assert!(result
+        .iter()
+        .any(|d| d.get("name").unwrap().as_str().unwrap() == "Item1"));
+    assert!(result
+        .iter()
+        .any(|d| d.get("name").unwrap().as_str().unwrap() == "Item3"));
+
+    // ✅ Verify the index was actually used (count incremented by 1)
+    assert_eq!(
+        metrics.find_by_index_count(),
+        initial_count + 1,
+        "Index should be used for query"
+    );
+}
+
+/// Test update with multikey index
+#[test]
+fn test_multikey_index_update() {
+    let db = prepare_db("test-multikey-index-update").unwrap();
+    let col = db.collection::<Document>("items");
+
+    col.create_index(IndexModel {
+        keys: doc! { "tags": 1 },
+        options: Some(IndexOptions {
+            name: Some("tags_idx".to_string()),
+            unique: Some(false),
+        }),
+    })
+    .unwrap();
+
+    col.insert_one(doc! {
+        "name": "Item1",
+        "tags": ["rojo", "grande"]
+    })
+    .unwrap();
+
+    // Update the array
+    col.update_one(
+        doc! { "name": "Item1" },
+        doc! { "$set": { "tags": ["azul", "pequeño"] } },
+    )
+    .unwrap();
+
+    // Old value should not be found
+    let result = col
+        .find(doc! { "tags": "rojo" })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+    assert_eq!(result.len(), 0);
+
+    // New value should be found
+    let result = col
+        .find(doc! { "tags": "azul" })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+    assert_eq!(result.len(), 1);
+}
+
+/// Test multikey index with default options (None)
+#[test]
+fn test_multikey_index_default_options() {
+    let db = prepare_db("test-multikey-index-default-options").unwrap();
+    let metrics = db.metrics();
+    metrics.enable();
+    let initial_count = metrics.find_by_index_count();
+
+    let col = db.collection::<Document>("items");
+
+    // Create index with options: None (default behavior)
+    col.create_index(IndexModel {
+        keys: doc! { "tags": 1 },
+        options: None, // <- Default options
+    })
+    .unwrap();
+
+    col.insert_many(vec![
+        doc! { "name": "Item1", "tags": ["rojo", "verde"] },
+        doc! { "name": "Item2", "tags": ["azul", "verde"] },
+    ])
+    .unwrap();
+
+    let result = col
+        .find(doc! { "tags": "verde" })
+        .run()
+        .unwrap()
+        .collect::<Result<Vec<Document>>>()
+        .unwrap();
+
+    assert_eq!(result.len(), 2);
+    assert_eq!(
+        metrics.find_by_index_count(),
+        initial_count + 1,
+        "Index should be used"
+    );
 }
