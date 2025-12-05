@@ -159,6 +159,7 @@ pub mod action;
 
 pub use db::{Database, Result};
 pub use coll::{Collection, CollectionT, TransactionalCollection};
+pub use coll::collection_info::IndexInfo;
 pub use config::{Config, ConfigBuilder};
 pub use transaction::Transaction;
 pub use db::client_cursor::ClientCursor;

@@ -22,6 +22,7 @@ use crate::{Error, IndexModel, Result};
 use crate::db::db_inner::DatabaseInner;
 use crate::action::{Aggregate, Find};
 use crate::results::{DeleteResult, InsertManyResult, InsertOneResult, UpdateResult};
+use super::collection_info::IndexInfo;
 
 macro_rules! try_multiple {
     ($err: expr, $action: expr) => {
@@ -78,6 +79,8 @@ pub trait CollectionT<T> {
 
     /// Drops the index specified by `name` from this collection.
     fn drop_index(&self, name: impl AsRef<str>) -> Result<()>;
+    fn list_index_names(&self) -> Result<Vec<String>>;
+    fn describe_index(&self, name: impl AsRef<str>) -> Result<Option<IndexInfo>>;
     fn drop(&self) -> Result<()>;
 
     /// Inserts `doc` into the collection.
@@ -215,6 +218,20 @@ impl<T> CollectionT<T> for Collection<T> {
         let txn = db.start_transaction()?;
         try_db_op!(txn, db.drop_index(&self.name, name.as_ref(), &txn));
         Ok(())
+    }
+
+    fn list_index_names(&self) -> Result<Vec<String>> {
+        let db = self.db.upgrade().ok_or(Error::DbIsClosed)?;
+        let txn = db.start_transaction()?;
+        let names = try_db_op!(txn, db.list_collection_index_names(&self.name, &txn));
+        Ok(names)
+    }
+
+    fn describe_index(&self, name: impl AsRef<str>) -> Result<Option<IndexInfo>> {
+        let db = self.db.upgrade().ok_or(Error::DbIsClosed)?;
+        let txn = db.start_transaction()?;
+        let info = try_db_op!(txn, db.describe_collection_index(&self.name, name.as_ref(), &txn));
+        Ok(info)
     }
 
     fn drop(&self) -> Result<()> {

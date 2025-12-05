@@ -13,7 +13,7 @@
 // limitations under the License.
 
 mod collection;
-pub(crate) mod collection_info;
+pub mod collection_info;
 mod txn_collection;
 
 pub use collection::{Collection, CollectionT};

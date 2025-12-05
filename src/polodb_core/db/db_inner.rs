@@ -335,6 +335,31 @@ impl DatabaseInner {
         Ok(())
     }
 
+    pub fn list_collection_index_names(&self, col_name: &str, txn: &TransactionInner) -> Result<Vec<String>> {
+        DatabaseInner::validate_col_name(col_name)?;
+
+        let collection_spec = match self.internal_get_collection_id_by_name(txn, col_name) {
+            Ok(spec) => spec,
+            Err(Error::CollectionNotFound(_)) => return Ok(Vec::new()),
+            Err(err) => return Err(err),
+        };
+
+        Ok(collection_spec.indexes.keys().cloned().collect())
+    }
+
+    pub fn describe_collection_index(&self, col_name: &str, index_name: &str, txn: &TransactionInner) -> Result<Option<IndexInfo>> {
+        DatabaseInner::validate_col_name(col_name)?;
+        DatabaseInner::validate_index_name(index_name)?;
+
+        let collection_spec = match self.internal_get_collection_id_by_name(txn, col_name) {
+            Ok(spec) => spec,
+            Err(Error::CollectionNotFound(_)) => return Ok(None),
+            Err(err) => return Err(err),
+        };
+
+        Ok(collection_spec.indexes.get(index_name).cloned())
+    }
+
     fn update_collection_spec(col_name: &str, collection_spec: &CollectionSpecification, txn: &TransactionInner) -> Result<()> {
         let stacked_key = crate::utils::bson::stacked_key(&[
             Bson::String(TABLE_META_PREFIX.to_string()),

@@ -327,6 +327,37 @@ fn test_drop_index() {
 }
 
 #[test]
+fn test_list_index_names_and_describe() {
+    vec![
+        prepare_db("test-list-and-describe-index").unwrap(),
+    ].iter().for_each(|db| {
+        let col = db.collection::<Document>("teacher");
+
+        col.create_index(IndexModel {
+            keys: doc! {
+                "age": 1,
+            },
+            options: Some(IndexOptions {
+                name: Some("age_idx".to_string()),
+                unique: Some(true),
+                ..Default::default()
+            }),
+        }).unwrap();
+
+        let names = col.list_index_names().unwrap();
+        assert_eq!(names, vec!["age_idx".to_string()]);
+
+        let info = col.describe_index("age_idx").unwrap().expect("index exists");
+        let order = info.keys.get("age").copied();
+        assert_eq!(order, Some(1));
+        assert_eq!(info.options.as_ref().unwrap().name.as_deref(), Some("age_idx"));
+        assert_eq!(info.options.as_ref().unwrap().unique, Some(true));
+
+        assert!(col.describe_index("non_exist").unwrap().is_none());
+    });
+}
+
+#[test]
 fn test_issue_171() {
     let db = prepare_db("test-issue-171").unwrap();
 

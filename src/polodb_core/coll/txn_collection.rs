@@ -23,6 +23,7 @@ use crate::{CollectionT, Error, IndexModel, Result};
 use crate::action::{Aggregate, Find};
 use crate::results::{DeleteResult, InsertManyResult, InsertOneResult, UpdateResult};
 use crate::transaction::TransactionInner;
+use super::collection_info::IndexInfo;
 
 pub struct TransactionalCollection<T> {
     db: Weak<DatabaseInner>,
@@ -125,6 +126,16 @@ impl<T> CollectionT<T> for TransactionalCollection<T> {
         let db = self.db.upgrade().ok_or(Error::DbIsClosed)?;
         db.drop_index(&self.name, name.as_ref(), &self.txn)?;
         Ok(())
+    }
+
+    fn list_index_names(&self) -> Result<Vec<String>> {
+        let db = self.db.upgrade().ok_or(Error::DbIsClosed)?;
+        db.list_collection_index_names(&self.name, &self.txn)
+    }
+
+    fn describe_index(&self, name: impl AsRef<str>) -> Result<Option<IndexInfo>> {
+        let db = self.db.upgrade().ok_or(Error::DbIsClosed)?;
+        db.describe_collection_index(&self.name, name.as_ref(), &self.txn)
     }
 
     fn drop(&self) -> crate::Result<()> {
