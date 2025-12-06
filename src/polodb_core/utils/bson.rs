@@ -141,12 +141,10 @@ pub fn split_stacked_keys(buffer: &[u8]) -> Result<Vec<Bson>> {
             let val = reader.read_i64::<BigEndian>()?;
             result.push(Bson::Int64(val));
         } else if ch == ElementType::Timestamp as u8 {
-            let val = reader.read_u64::<BigEndian>()?;
-            let timestamp = Timestamp {
-                time: (val >> 32) as u32,
-                increment: val as u32,
-            };
-            result.push(Bson::Timestamp(timestamp));
+            let val: u64 = reader.read_u64::<BigEndian>()?;
+            let time: u32 = (val >> 32) as u32;
+            let increment: u32 = (val & 0xFFFFFFFF) as u32;
+            result.push(Bson::Timestamp(Timestamp { time, increment }));
         } else if ch == ElementType::ObjectId as u8 {
             let mut bytes = [0u8; 12];
             reader.read_exact(&mut bytes)?;
