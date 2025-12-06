@@ -47,26 +47,6 @@ El operador `EqualOrContains` itera nuevamente sobre el array resultante para ve
 
 ---
 
-## Análisis de Regresión: Campos No-Array
-
-Una preocupación importante es si los cambios afectan el rendimiento de queries "tradicionales" (e.g., `{ "name": "Alice" }` o `{ "address.city": "NY" }`) sobre documentos que no contienen arrays.
-
-### 1. Queries Simples (`{ "key": "value" }`)
-*   **Codegen**: La función `recursively_get_field` detecta que no hay puntos (`.`) en la llave.
-*   **Instrucciones**: Emite una sola instrucción `GetField("key")`.
-*   **VM**: `DbOp::GetField` verifica si el top del stack es un Array. Como es un Documento, procede con `try_get_document_value`.
-*   **Impacto**: **Nulo**. El check extra de `matches!(Bson::Array)` es trivial y predecible por el CPU.
-
-### 2. Queries Anidadas (`{ "a.b": "value" }`)
-*   **Codegen (Antes)**: Emitía `GetField("a.b")` (1 instrucción). El helper `try_get_document_value` parseaba "a.b" internamente.
-*   **Codegen (Ahora)**: Emite `GetField("a")` seguido de `GetField("b")` (2 instrucciones).
-*   **Overhead**:
-    *   **Positivo**: Se evita parsear "a.b" dentro de `try_get_document_value` (que hacía `split('.')` en cada llamada). Ahora se hacen dos llamadas con keys simples ("a" y "b").
-    *   **Negativo**: Se añaden ciclos del loop del VM (fetch-decode-execute) y operaciones de Stack (`Push`/`Pop`) intermedias.
-*   **Impacto**: **Leve**. El overhead del loop del VM es mayor que el parsing de strings simple, por lo que queries con paths muy profundos (e.g., `a.b.c.d.e`) podrían ser marginalmente más lentas debido al dispatch de instrucciones, pero esto es el trade-off necesario para soportar arrays en cualquier nivel del path.
-
----
-
 ## Impacto Negativo Potencial
 
 1.  **Garbage Collection / Memory Pressure**: En un escaneo de colección completa (`CollScan`) sobre una colección grande, la creación y destrucción constante de vectores `Vec<Bson>` y la clonación de Strings puede generar fragmentación o presión sobre el asignador de memoria.

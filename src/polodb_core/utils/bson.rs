@@ -223,33 +223,70 @@ pub fn value_cmp(a: &Bson, b: &Bson) -> BsonResult<Ordering> {
     }
 }
 
+/// Retrieves a value from a BSON document using a dot-separated path.
+///
+/// Supports implicit array projection: when a path segment resolves to an array,
+/// the remaining path is extracted from each document element in the array.
+///
+/// # Examples
+/// - `"name"` → returns the `name` field
+/// - `"info.color"` → returns `doc.info.color`
+/// - `"items.price"` where `items` is `[{price: 10}, {price: 20}]` → returns `[10, 20]`
 pub fn try_get_document_value(doc: &Document, key: &str) -> Option<Bson> {
     let keys = key.split('.').collect::<Vec<&str>>();
     let keys_slice = keys.as_slice();
     try_get_document_by_slices(doc, keys_slice)
 }
 
+/// Internal helper that traverses a document by path segments.
+///
+/// Handles three cases:
+/// 1. **Document**: recurse into nested document
+/// 2. **Array**: apply implicit field projection (extract field from each element)
+/// 3. **Scalar**: return value if at end of path, None otherwise
 fn try_get_document_by_slices(doc: &Document, keys: &[&str]) -> Option<Bson> {
-    let first = keys.first();
-    first.and_then(|first_str| {
-        let remains = &keys[1..];
-        let value = doc.get(first_str);
-        match value {
-            Some(Bson::Document(doc)) => {
-                if remains.is_empty() {
-                    return Some(Bson::Document(doc.clone()));
-                }
-                try_get_document_by_slices(doc, remains)
+    let first = keys.first()?;
+    let remains = &keys[1..];
+    let value = doc.get(*first)?;
+
+    match value {
+        Bson::Document(nested_doc) => {
+            if remains.is_empty() {
+                Some(Bson::Document(nested_doc.clone()))
+            } else {
+                try_get_document_by_slices(nested_doc, remains)
             }
-            Some(v) => {
-                if remains.is_empty() {
-                    return Some(v.clone());
+        }
+        Bson::Array(arr) => {
+            if remains.is_empty() {
+                Some(Bson::Array(arr.clone()))
+            } else {
+                let results: Vec<Bson> = arr
+                    .iter()
+                    .filter_map(|item| {
+                        if let Bson::Document(item_doc) = item {
+                            try_get_document_by_slices(item_doc, remains)
+                        } else {
+                            None
+                        }
+                    })
+                    .collect();
+
+                if results.is_empty() {
+                    None
+                } else {
+                    Some(Bson::Array(results))
                 }
+            }
+        }
+        other => {
+            if remains.is_empty() {
+                Some(other.clone())
+            } else {
                 None
             }
-            _ => None,
         }
-    })
+    }
 }
 
 pub fn bson_datetime_now() -> DateTime {

@@ -604,18 +604,20 @@ impl Codegen {
                             self.emit(DbOp::Pop);
                         }
                     } else {
-                        // Simple key without numeric indices
-                        let field_size = self.recursively_get_field(key, not_found_label);
+                        // Simple key without numeric indices: single GetField for full path
+                        let key_static_id = self.push_static(key.into());
+                        self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
 
                         let value_static_id = self.push_static(value.clone());
-                        self.emit_push_value(value_static_id); // push a value2
+                        self.emit_push_value(value_static_id); // push query value
 
                         self.emit(DbOp::EqualOrContains);
                         // if not equal，go to next
                         self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                        self.emit(DbOp::Pop2);
-                        self.emit_u32((field_size + 1) as u32);
+                        // Pop comparison operands: query value + field value
+                        self.emit(DbOp::Pop);
+                        self.emit(DbOp::Pop);
                     }
                 }
             }
@@ -675,45 +677,96 @@ impl Codegen {
         sub_key: &str,
         sub_value: &Bson,
     ) -> Result<()> {
+        let segments: Vec<&str> = key.split('.').collect();
+        let has_numeric_segment = segments
+            .iter()
+            .any(|s| s.parse::<i32>().is_ok());
+
         match sub_key {
             "$eq" => {
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    // Mantener la semántica actual para paths con índices numéricos
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::Equal, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Equal, is_in_not);
 
-                // if not equal，go to next
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    // if not equal，go to next
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    // Path sin índices numéricos: una sola instrucción GetField para el path completo
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Equal, is_in_not);
+
+                    // if not equal，go to next
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    // Pop comparación: valor de query + valor de campo
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$gt" => {
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::Greater, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Greater, is_in_not);
 
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Greater, is_in_not);
+
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$gte" => {
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::GreaterEqual, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::GreaterEqual, is_in_not);
 
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::GreaterEqual, is_in_not);
+
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             // check the value is array
@@ -728,57 +781,115 @@ impl Codegen {
                     }
                 }
 
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::In, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::In, is_in_not);
 
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::In, is_in_not);
+
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$lt" => {
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::Less, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Less, is_in_not);
 
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Less, is_in_not);
+
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$lte" => {
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::LessEqual, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::LessEqual, is_in_not);
 
-                // less
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    // less
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::LessEqual, is_in_not);
+
+                    // less
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$ne" => {
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::Equal, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Equal, is_in_not);
 
-                // if equal，go to next
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    // if equal，go to next
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::Equal, is_in_not);
+
+                    // if equal，go to next
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$nin" => {
@@ -792,16 +903,30 @@ impl Codegen {
                     }
                 }
 
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::In, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::In, is_in_not);
 
-                self.emit_goto(DbOp::IfTrue, not_found_label);
+                    self.emit_goto(DbOp::IfTrue, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::In, is_in_not);
+
+                    self.emit_goto(DbOp::IfTrue, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$all" => {
@@ -815,16 +940,30 @@ impl Codegen {
                     }
                 }
 
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
-                self.emit_logical(DbOp::All, is_in_not);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::All, is_in_not);
 
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+                    self.emit_logical(DbOp::All, is_in_not);
+
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$size" => {
@@ -838,18 +977,35 @@ impl Codegen {
                     }
                 };
 
-                let field_size = self.recursively_get_field(key, not_found_label);
-                self.emit(DbOp::ArraySize);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
+                    self.emit(DbOp::ArraySize);
 
-                let expect_size_stat_id = self.push_static(Bson::from(expected_size));
-                self.emit_push_value(expect_size_stat_id);
+                    let expect_size_stat_id = self.push_static(Bson::from(expected_size));
+                    self.emit_push_value(expect_size_stat_id);
 
-                self.emit_logical(DbOp::Equal, is_in_not);
+                    self.emit_logical(DbOp::Equal, is_in_not);
 
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    self.emit(DbOp::ArraySize);
+
+                    let expect_size_stat_id = self.push_static(Bson::from(expected_size));
+                    self.emit_push_value(expect_size_stat_id);
+
+                    self.emit_logical(DbOp::Equal, is_in_not);
+
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$regex" => {
@@ -863,18 +1019,34 @@ impl Codegen {
                     }
                 }
 
-                let field_size = self.recursively_get_field(key, not_found_label);
+                if has_numeric_segment {
+                    let field_size = self.recursively_get_field(key, not_found_label);
 
-                let stat_val_id = self.push_static(sub_value.clone());
-                self.emit_push_value(stat_val_id);
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
 
-                self.emit_logical(DbOp::Regex, is_in_not);
+                    self.emit_logical(DbOp::Regex, is_in_not);
 
-                // if not equal，go to next
-                self.emit_goto(DbOp::IfFalse, not_found_label);
+                    // if not equal，go to next
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                self.emit(DbOp::Pop2);
-                self.emit_u32((field_size + 1) as u32);
+                    self.emit(DbOp::Pop2);
+                    self.emit_u32((field_size + 1) as u32);
+                } else {
+                    let key_static_id = self.push_static(key.into());
+                    self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+
+                    let stat_val_id = self.push_static(sub_value.clone());
+                    self.emit_push_value(stat_val_id);
+
+                    self.emit_logical(DbOp::Regex, is_in_not);
+
+                    // if not equal，go to next
+                    self.emit_goto(DbOp::IfFalse, not_found_label);
+
+                    self.emit(DbOp::Pop);
+                    self.emit(DbOp::Pop);
+                }
             }
 
             "$not" => {
