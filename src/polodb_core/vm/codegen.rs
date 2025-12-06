@@ -605,8 +605,7 @@ impl Codegen {
                         }
                     } else {
                         // Simple key without numeric indices
-                        let key_static_id = self.push_static(key.into());
-                        self.emit_goto2(DbOp::GetField, key_static_id, not_found_label);
+                        let field_size = self.recursively_get_field(key, not_found_label);
 
                         let value_static_id = self.push_static(value.clone());
                         self.emit_push_value(value_static_id); // push a value2
@@ -615,8 +614,8 @@ impl Codegen {
                         // if not equal，go to next
                         self.emit_goto(DbOp::IfFalse, not_found_label);
 
-                        self.emit(DbOp::Pop); // pop a value2
-                        self.emit(DbOp::Pop); // pop a value1
+                        self.emit(DbOp::Pop2);
+                        self.emit_u32((field_size + 1) as u32);
                     }
                 }
             }

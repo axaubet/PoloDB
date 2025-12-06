@@ -645,8 +645,45 @@ impl VM {
                         let key = self.borrow_static(key_stat_id as usize);
                         let key_name = key.as_str().unwrap();
                         let top = &self.stack[self.stack.len() - 1];
-                        let doc = match top {
-                            Bson::Document(doc) => doc,
+
+                        match top {
+                            Bson::Document(doc) => {
+                                match crate::utils::bson::try_get_document_value(doc, key_name) {
+                                    Some(val) => {
+                                        self.r0 = 1;
+                                        self.stack.push(val);
+                                        self.pc = self.pc.add(9);
+                                    }
+
+                                    None => {
+                                        self.r0 = 0;
+                                        self.reset_location(location);
+                                    }
+                                }
+                            }
+                            Bson::Array(arr) => {
+                                let mut result = Vec::new();
+                                for item in arr {
+                                    if let Bson::Document(doc) = item {
+                                        if let Some(val) =
+                                            crate::utils::bson::try_get_document_value(
+                                                doc, key_name,
+                                            )
+                                        {
+                                            result.push(val);
+                                        }
+                                    }
+                                }
+
+                                if !result.is_empty() {
+                                    self.r0 = 1;
+                                    self.stack.push(Bson::Array(result));
+                                    self.pc = self.pc.add(9);
+                                } else {
+                                    self.r0 = 0;
+                                    self.reset_location(location);
+                                }
+                            }
                             _ => {
                                 let name = format!("{}", top);
                                 let err = FieldTypeUnexpectedStruct {
@@ -656,19 +693,6 @@ impl VM {
                                 };
                                 self.state = VmState::Halt;
                                 return Err(err.into());
-                            }
-                        };
-
-                        match crate::utils::bson::try_get_document_value(doc, key_name) {
-                            Some(val) => {
-                                self.r0 = 1;
-                                self.stack.push(val);
-                                self.pc = self.pc.add(9);
-                            }
-
-                            None => {
-                                self.r0 = 0;
-                                self.reset_location(location);
                             }
                         }
                     }

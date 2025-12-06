@@ -852,21 +852,19 @@ mod tests {
 75: Goto(43)
 
 80: Label(0, "compare_function")
-85: GetField("name", 129)
+85: GetField("name", 135)
 94: PushValue("Vincent Chan")
 99: EqualOrContains
-100: FalseJump(129)
-105: Pop
-106: Pop
-107: GetField("age", 129)
-116: PushValue(32)
-121: EqualOrContains
-122: FalseJump(129)
-127: Pop
-128: Pop
+100: FalseJump(135)
+105: Pop2(2)
+110: GetField("age", 135)
+119: PushValue(32)
+124: EqualOrContains
+125: FalseJump(135)
+130: Pop2(2)
 
-129: Label(1, "compare_function_clean")
-134: Ret0
+135: Label(1, "compare_function_clean")
+140: Ret0
 "#;
         assert_eq!(expect, actual)
     }
@@ -909,15 +907,15 @@ mod tests {
 75: Goto(43)
 
 80: Label(0, "compare_function")
-85: GetField("info.color", 107)
-94: PushValue("yellow")
-99: EqualOrContains
-100: FalseJump(107)
-105: Pop
-106: Pop
+85: GetField("info", 119)
+94: GetField("color", 119)
+103: PushValue("yellow")
+108: EqualOrContains
+109: FalseJump(119)
+114: Pop2(3)
 
-107: Label(1, "compare_function_clean")
-112: Ret0
+119: Label(1, "compare_function_clean")
+124: Ret0
 "#;
         assert_eq!(expect, actual)
     }
@@ -1056,21 +1054,19 @@ mod tests {
 75: Goto(43)
 
 80: Label(0, "compare_function")
-85: GetField("_id", 129)
+85: GetField("_id", 135)
 94: PushValue(6)
 99: EqualOrContains
-100: FalseJump(129)
-105: Pop
-106: Pop
-107: GetField("age", 129)
-116: PushValue(32)
-121: EqualOrContains
-122: FalseJump(129)
-127: Pop
-128: Pop
+100: FalseJump(135)
+105: Pop2(2)
+110: GetField("age", 135)
+119: PushValue(32)
+124: EqualOrContains
+125: FalseJump(135)
+130: Pop2(2)
 
-129: Label(1, "compare_function_clean")
-134: Ret0
+135: Label(1, "compare_function_clean")
+140: Ret0
 "#;
         assert_eq!(expect, actual)
     }
@@ -1120,38 +1116,36 @@ mod tests {
 75: Goto(43)
 
 80: Label(0, "compare_function")
-85: Goto(156)
+85: Goto(162)
 
 90: Label(8)
-95: GetField("age", 117)
+95: GetField("age", 120)
 104: PushValue(11)
 109: EqualOrContains
-110: FalseJump(117)
-115: Pop
-116: Pop
+110: FalseJump(120)
+115: Pop2(2)
 
-117: Label(9)
-122: Ret0
+120: Label(9)
+125: Ret0
 
-123: Label(10)
-128: GetField("age", 150)
-137: PushValue(12)
-142: EqualOrContains
-143: FalseJump(150)
-148: Pop
-149: Pop
+126: Label(10)
+131: GetField("age", 156)
+140: PushValue(12)
+145: EqualOrContains
+146: FalseJump(156)
+151: Pop2(2)
 
-150: Label(11)
-155: Ret0
+156: Label(11)
+161: Ret0
 
-156: Label(7)
-161: Call(90, 0)
-170: TrueJump(189)
-175: Call(123, 0)
-184: TrueJump(189)
+162: Label(7)
+167: Call(90, 0)
+176: TrueJump(195)
+181: Call(126, 0)
+190: TrueJump(195)
 
-189: Label(1, "compare_function_clean")
-194: Ret0
+195: Label(1, "compare_function_clean")
+200: Ret0
 "#;
         assert_eq!(expect, actual);
     }

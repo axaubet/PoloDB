@@ -768,3 +768,101 @@ fn test_array_index_out_of_bounds() {
 
     assert_eq!(result.len(), 0);
 }
+
+// ============================================
+// Phase X: Array of Objects Implicit Field Access
+// ============================================
+
+/// Test querying fields within objects inside an array (e.g. "items.id")
+#[test]
+fn test_query_field_in_array_of_objects() {
+    let db = prepare_db("test-array-objects").unwrap();
+    let col = db.collection::<Document>("products");
+
+    col.insert_one(doc! {
+        "id": "p1",
+        "channel_ids": [
+            { "channel_id": "ios", "external_id": "sku_ios_123" },
+            { "channel_id": "android", "external_id": "sku_and_456" }
+        ]
+    })
+    .unwrap();
+
+    // Query for nested field in array elements
+    let result = col
+        .find_one(doc! { "channel_ids.channel_id": "ios" })
+        .unwrap();
+
+    match result {
+        Some(doc) => {
+            assert_eq!(doc.get("id").unwrap().as_str().unwrap(), "p1");
+        }
+        None => {
+            panic!("Document NOT found - Implicit array field mapping failed");
+        }
+    }
+}
+
+/// Test querying fields within an array of objects nested deep in a sub-document
+/// Structure: Document -> Sub-document -> Array of Objects -> Field
+/// Query: "metadata.attributes.key": "color"
+#[test]
+fn test_query_nested_array_of_objects() {
+    let db = prepare_db("test-nested-array-objects").unwrap();
+    let col = db.collection::<Document>("items");
+
+    col.insert_one(doc! {
+        "id": "doc1",
+        "metadata": {
+            "version": 1,
+            "attributes": [
+                { "key": "color", "value": "red" },
+                { "key": "size", "value": "large" }
+            ],
+            "logs": [
+                { "level": "info", "msg": "created" },
+                { "level": "error", "msg": "failed" }
+            ]
+        }
+    })
+    .unwrap();
+
+    // 1. Query nested attribute key
+    let result = col
+        .find_one(doc! { "metadata.attributes.key": "color" })
+        .unwrap();
+
+    match result {
+        Some(doc) => {
+            assert_eq!(doc.get("id").unwrap().as_str().unwrap(), "doc1");
+        }
+        None => panic!("Should find document by metadata.attributes.key"),
+    }
+
+    // 2. Query nested attribute value
+    let result = col
+        .find_one(doc! { "metadata.attributes.value": "large" })
+        .unwrap();
+    assert!(
+        result.is_some(),
+        "Should find document by metadata.attributes.value"
+    );
+
+    // 3. Query another nested array in same sub-doc
+    let result = col
+        .find_one(doc! { "metadata.logs.level": "error" })
+        .unwrap();
+    assert!(
+        result.is_some(),
+        "Should find document by metadata.logs.level"
+    );
+
+    // 4. Negative test
+    let result = col
+        .find_one(doc! { "metadata.attributes.key": "weight" })
+        .unwrap();
+    assert!(
+        result.is_none(),
+        "Should NOT find document with non-existent key"
+    );
+}

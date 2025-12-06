@@ -12,15 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-use std::cmp::Ordering;
-use std::io::{BufRead, Read, Write};
-use bson::{Bson, DateTime, Decimal128, Document, Timestamp};
+use crate::{Error, Result};
 use bson::oid::ObjectId;
-use bson::spec::ElementType;
-use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 use bson::ser::Error as BsonErr;
 use bson::ser::Result as BsonResult;
-use crate::{Error, Result};
+use bson::spec::ElementType;
+use bson::{Bson, DateTime, Decimal128, Document, Timestamp};
+use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
+use std::cmp::Ordering;
+use std::io::{BufRead, Read, Write};
 
 pub fn stacked_key<'a, T: IntoIterator<Item = &'a Bson>>(keys: T) -> Result<Vec<u8>> {
     let mut result = Vec::<u8>::new();
@@ -103,7 +103,7 @@ pub fn stacked_key_bytes<W: Write>(writer: &mut W, key: &Bson) -> Result<()> {
 
         _ => {
             let val = format!("{:?}", key);
-            return Err(Error::NotAValidKeyType(val))
+            return Err(Error::NotAValidKeyType(val));
         }
     }
 
@@ -185,20 +185,20 @@ pub fn value_cmp(a: &Bson, b: &Bson) -> BsonResult<Ordering> {
         (Bson::Int64(i1), Bson::Int32(i2)) => {
             let i2_64 = *i2 as i64;
             Ok(i1.cmp(&i2_64))
-        },
+        }
         (Bson::Int32(i1), Bson::Int64(i2)) => {
             let i1_64 = *i1 as i64;
             Ok(i1_64.cmp(i2))
-        },
+        }
         (Bson::Double(d1), Bson::Double(d2)) => Ok(d1.total_cmp(d2)),
         (Bson::Double(d1), Bson::Int32(d2)) => {
             let f = *d2 as f64;
             Ok(d1.total_cmp(&f))
-        },
+        }
         (Bson::Double(d1), Bson::Int64(d2)) => {
             let f = *d2 as f64;
             Ok(d1.total_cmp(&f))
-        },
+        }
         (Bson::Int32(i1), Bson::Double(d2)) => {
             let f = *i1 as f64;
             Ok(f.total_cmp(d2))
@@ -219,7 +219,7 @@ pub fn value_cmp(a: &Bson, b: &Bson) -> BsonResult<Ordering> {
             }
 
             Err(BsonErr::InvalidCString("Unsupported types".to_string()))
-        },
+        }
     }
 }
 
@@ -231,23 +231,25 @@ pub fn try_get_document_value(doc: &Document, key: &str) -> Option<Bson> {
 
 fn try_get_document_by_slices(doc: &Document, keys: &[&str]) -> Option<Bson> {
     let first = keys.first();
-    first
-        .and_then(|first_str| {
-            let remains = &keys[1..];
-            let value = doc.get(first_str);
-            match value {
-                Some(Bson::Document(doc)) => {
-                    try_get_document_by_slices(doc, remains)
+    first.and_then(|first_str| {
+        let remains = &keys[1..];
+        let value = doc.get(first_str);
+        match value {
+            Some(Bson::Document(doc)) => {
+                if remains.is_empty() {
+                    return Some(Bson::Document(doc.clone()));
                 }
-                Some(v) => {
-                    if remains.is_empty() {
-                        return Some(v.clone());
-                    }
-                    None
-                }
-                _ => None,
+                try_get_document_by_slices(doc, remains)
             }
-        })
+            Some(v) => {
+                if remains.is_empty() {
+                    return Some(v.clone());
+                }
+                None
+            }
+            _ => None,
+        }
+    })
 }
 
 pub fn bson_datetime_now() -> DateTime {
@@ -256,30 +258,63 @@ pub fn bson_datetime_now() -> DateTime {
 
 #[cfg(test)]
 mod tests {
-    use std::cmp::Ordering;
-    use bson::{Bson, doc, Timestamp};
-    use bson::oid::ObjectId;
     use crate::utils::bson::{split_stacked_keys, stacked_key, value_cmp};
+    use bson::oid::ObjectId;
+    use bson::{doc, Bson, Timestamp};
+    use std::cmp::Ordering;
 
     #[test]
     fn test_value_cmp() {
-        assert_eq!(value_cmp(&Bson::Int32(2), &Bson::Int64(3)).unwrap(), Ordering::Less);
-        assert_eq!(value_cmp(&Bson::Int32(2), &Bson::Int64(1)).unwrap(), Ordering::Greater);
-        assert_eq!(value_cmp(&Bson::Int32(1), &Bson::Int64(1)).unwrap(), Ordering::Equal);
-        assert_eq!(value_cmp(&Bson::Int64(2), &Bson::Int32(3)).unwrap(), Ordering::Less);
-        assert_eq!(value_cmp(&Bson::Int64(2), &Bson::Int32(1)).unwrap(), Ordering::Greater);
-        assert_eq!(value_cmp(&Bson::Int64(1), &Bson::Int32(1)).unwrap(), Ordering::Equal);
+        assert_eq!(
+            value_cmp(&Bson::Int32(2), &Bson::Int64(3)).unwrap(),
+            Ordering::Less
+        );
+        assert_eq!(
+            value_cmp(&Bson::Int32(2), &Bson::Int64(1)).unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            value_cmp(&Bson::Int32(1), &Bson::Int64(1)).unwrap(),
+            Ordering::Equal
+        );
+        assert_eq!(
+            value_cmp(&Bson::Int64(2), &Bson::Int32(3)).unwrap(),
+            Ordering::Less
+        );
+        assert_eq!(
+            value_cmp(&Bson::Int64(2), &Bson::Int32(1)).unwrap(),
+            Ordering::Greater
+        );
+        assert_eq!(
+            value_cmp(&Bson::Int64(1), &Bson::Int32(1)).unwrap(),
+            Ordering::Equal
+        );
     }
 
     #[test]
     fn test_try_get_document_value() {
-        assert_eq!(super::try_get_document_value(&doc!{}, "a"), None);
-        assert_eq!(super::try_get_document_value(&doc!{"a": 1}, "a"), Some(Bson::Int32(1)));
-        assert_eq!(super::try_get_document_value(&doc!{"a": 1}, "b"), None);
-        assert_eq!(super::try_get_document_value(&doc!{"a": { "b": 1 }}, "a.b"), Some(Bson::Int32(1)));
-        assert_eq!(super::try_get_document_value(&doc!{"a": { "b": 1 }}, "a.c"), None);
-        assert_eq!(super::try_get_document_value(&doc!{"a": { "b": { "c": 1 }}}, "a.b.c"), Some(Bson::Int32(1)));
-        assert_eq!(super::try_get_document_value(&doc!{"a": { "b": { "c": 1 }}}, "a.b.d"), None);
+        assert_eq!(super::try_get_document_value(&doc! {}, "a"), None);
+        assert_eq!(
+            super::try_get_document_value(&doc! {"a": 1}, "a"),
+            Some(Bson::Int32(1))
+        );
+        assert_eq!(super::try_get_document_value(&doc! {"a": 1}, "b"), None);
+        assert_eq!(
+            super::try_get_document_value(&doc! {"a": { "b": 1 }}, "a.b"),
+            Some(Bson::Int32(1))
+        );
+        assert_eq!(
+            super::try_get_document_value(&doc! {"a": { "b": 1 }}, "a.c"),
+            None
+        );
+        assert_eq!(
+            super::try_get_document_value(&doc! {"a": { "b": { "c": 1 }}}, "a.b.c"),
+            Some(Bson::Int32(1))
+        );
+        assert_eq!(
+            super::try_get_document_value(&doc! {"a": { "b": { "c": 1 }}}, "a.b.d"),
+            None
+        );
     }
 
     #[test]
@@ -293,7 +328,10 @@ mod tests {
             Bson::Undefined,
             Bson::Null,
             Bson::Boolean(true),
-            Bson::Timestamp(Timestamp { time: 42, increment: 42 }),
+            Bson::Timestamp(Timestamp {
+                time: 42,
+                increment: 42,
+            }),
             Bson::DateTime(super::bson_datetime_now()),
         ];
         let stacked = stacked_key(&values).unwrap();
@@ -305,5 +343,4 @@ mod tests {
             assert_eq!(slices[i], values[i]);
         }
     }
-
 }
